@@ -1,0 +1,138 @@
+name: deploy-image
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - build-latest
+    branches:
+      - develop
+    types:
+      - completed
+#permissions:
+#  contents: read
+jobs:
+  deploy-image:
+    if: |
+      github.actor != 'dependabot[bot]' &&
+      !(
+        contains(github.event.pull_request.title, '[skip-release]') ||
+        contains(github.event.comment.body, '/skiprelease')
+      ) && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      latest-ref: refs/heads/develop
+    strategy:
+      matrix:
+        geoserverMajorVersion:
+          - 2
+        imageVersion:
+          - image: 9.0.109-jdk17-temurin-noble
+            javaHome: /opt/java/openjdk
+        geoserverMinorVersion:
+          - minor: 28
+            patch: 0
+        stablePluginBaseURL:
+          # empty because it often changes, so it's better
+          # to use the default one described in the Dockerfile
+          # to make it consistent. How-ever we keep this in GH Action
+          # to make it easy to pass overrides in the future.
+          - https://sourceforge.net/projects/geoserver/files/GeoServer
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Get Current Date
+        id: current_date
+        run: echo "formatted=$(date -u +%Y.%m.%d)" >> $GITHUB_OUTPUT
+
+      - name: Check if image exists on Docker Hub
+        id: check_hub_image_exists
+        run: |
+          docker login --username ${{ secrets.DOCKERHUB_USERNAME }} --password ${{ secrets.DOCKERHUB_PASSWORD }}
+          TOKEN=$(curl -s -H "Content-Type: application/json" -X POST -d '{"username": "'${{ secrets.DOCKERHUB_USERNAME }}'", "password": "'${{ secrets.DOCKERHUB_PASSWORD }}'"}' https://hub.docker.com/v2/users/login/ | jq -r .token)
+          check_image=$(curl --silent -f --head -lL https://hub.docker.com/v2/repositories/kartoza/geoserver/tags/${{ matrix.geoserverMajorVersion }}-${{ matrix.geoserverMinorVersion.minor }}.${{ matrix.geoserverMinorVersion.patch }}/ | head -n 1 | cut -d ' ' -f2) >> $GITHUB_OUTPUT
+
+      - name: Build prod image
+        if: |
+          github.actor != 'dependabot[bot]' &&
+          !(
+            contains(github.event.pull_request.title, '[skip-release]') ||
+            contains(github.event.comment.body, '/skiprelease')
+          ) && github.event.workflow_run.conclusion == 'success'
+        timeout-minutes: 45
+        id: docker_build_prod
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          file: Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_REPO }}/geoserver
+            ${{ steps.check_hub_image_exists.outputs.check_image == 200 && format('{0}/geoserver:{1}.{2}.{3}', secrets.DOCKERHUB_REPO,  matrix.geoserverMajorVersion, matrix.geoserverMinorVersion.minor, matrix.geoserverMinorVersion.patch) || null}}
+            ${{ secrets.DOCKERHUB_REPO }}/geoserver:${{ matrix.geoserverMajorVersion }}.${{ matrix.geoserverMinorVersion.minor }}.${{ matrix.geoserverMinorVersion.patch }}
+            ${{ secrets.DOCKERHUB_REPO }}/geoserver:${{ matrix.geoserverMajorVersion }}.${{ matrix.geoserverMinorVersion.minor }}.${{ matrix.geoserverMinorVersion.patch }}--v${{ steps.current_date.outputs.formatted }}
+          build-args: |
+            IMAGE_VERSION=${{ matrix.imageVersion.image }}
+            JAVA_HOME=${{ matrix.imageVersion.javaHome }}
+            GS_VERSION=${{ matrix.geoserverMajorVersion }}.${{ matrix.geoserverMinorVersion.minor }}.${{ matrix.geoserverMinorVersion.patch }}
+            WAR_URL=https://downloads.sourceforge.net/project/geoserver/GeoServer/${{ matrix.geoserverMajorVersion }}.${{ matrix.geoserverMinorVersion.minor }}.${{ matrix.geoserverMinorVersion.patch }}/geoserver-${{ matrix.geoserverMajorVersion }}.${{ matrix.geoserverMinorVersion.minor }}.${{ matrix.geoserverMinorVersion.patch }}-war.zip
+            STABLE_PLUGIN_BASE_URL=${{ matrix.stablePluginBaseURL }}
+          cache-from: |
+            type=gha,scope=test
+            type=gha,scope=prod
+          cache-to: type=gha,scope=prod
+          target: geoserver-prod
+
+  publish_release_artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      github.actor != 'dependabot[bot]' &&
+      !(
+        contains(github.event.pull_request.title, '[skip-release]') ||
+        contains(github.event.comment.body, '/skiprelease') 
+      ) &&  github.event.workflow_run.conclusion == 'success'
+    needs: [deploy-image]
+    strategy:
+      matrix:
+        geoserverMajorVersion:
+          - 2
+        geoserverMinorVersion:
+          - minor: 28
+            patch: 0
+    steps:
+      - name: Checkout code
+        id: git_checkout
+        uses: actions/checkout@v6
+        with:
+          ref: 'develop'
+
+      - name: Get Current Date
+        id: current_date
+        run: echo "formatted=$(date -u +%Y.%m.%d)" >> $GITHUB_OUTPUT
+
+      - name: Get Latest Commit Hash
+        id: latest_commit_hash
+        run: echo "commit=$(git rev-parse --short "$GITHUB_SHA")" >> $GITHUB_OUTPUT
+
+      - name: publish_release
+        id: tag_releases
+        run: |
+          gh release create v${{ matrix.geoserverMajorVersion }}.${{ matrix.geoserverMinorVersion.minor }}.${{ matrix.geoserverMinorVersion.patch }}--${{ steps.current_date.outputs.formatted }}--${{ steps.latest_commit_hash.outputs.commit }} --notes ${{ steps.latest_commit_hash.outputs.commit }} --target develop --repo $GITHUB_REPOSITORY
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+
+

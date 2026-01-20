@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Moja Mapa GeoServer</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+
+    <style>
+        #map { width: 100%; height: 100vh; }
+        body { margin: 0; padding: 0; }
+    </style>
+
+</head>
+<body>
+
+<div id="map"></div>
+<div id="slider-container" style="position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000; background: white; padding: 10px; border-radius: 5px;">
+    2015 <input id="range-slider" type="range" min="0" max="1" step="0.1" value="1"> 2025
+</div>
+
+<script>
+    // 1. Inicjalizacja mapy (widok na Polskę)
+    var map = L.map('map').setView([52.23, 21.01], 6);
+
+    map.createPane('pane2015'); // Panel dla starych danych
+    map.getPane('pane2015').style.zIndex = 400; // Niższy z-index
+
+    map.createPane('pane2025'); // Panel dla nowych danych
+    map.getPane('pane2025').style.zIndex = 450; // Wyższy z-index (zawsze na górze)
+
+    // 2. Podkład mapowy (OpenStreetMap)
+    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    // 3. Konfiguracja połączenia z Twoim GeoServerem
+    // Zastąp 'http://TWOJ-ADRES:8080/geoserver/wms' swoim adresem
+    var geoServerUrl = 'https://gis.rabciak.site/geoserver/lublin/wms';
+
+    // 4. Definicja Twoich warstw z GeoServera
+    var budynki = L.tileLayer.wms(geoServerUrl, {
+        layers: 'lublin:budynki_2025', // Zmień na: 'przestrzeń_nazw:warstwa'
+        format: 'image/png',
+        tileSize: 1024,
+        transparent: true,
+        attribution: "Dane z mojego PostGIS",
+        pane: 'pane2025'
+    }).addTo(map);
+
+    var budynki2015 = L.tileLayer.wms(geoServerUrl, {
+        layers: 'lublin:budynki_2015',
+        format: 'image/png',
+        transparent: true,
+        tileSize: 1024,
+        pane: 'pane2015'
+    }).addTo(map);
+    var lasy = L.tileLayer.wms(geoServerUrl, {
+        layers: 'lublin:lasy_2025',
+        format: 'image/png',
+        transparent: true,
+        tileSize: 1024,
+        pane: 'pane2025'
+    });
+    var lasy2015 = L.tileLayer.wms(geoServerUrl, {
+        layers: 'lublin:lasy_2015',
+        format: 'image/png',
+        transparent: true,
+        tileSize: 1024,
+        pane: 'pane2015'
+    });
+    var analiza_zageszczenia = L.tileLayer.wms(geoServerUrl, {
+        layers: 'lublin:analiza_zageszczenia',
+        format: 'image/png',
+        transparent: true,
+        tileSize: 1024,
+        pane: 'pane2015'
+    });
+    var nowe_budynki = L.tileLayer.wms(geoServerUrl, {
+        layers: 'lublin:nowe_budynki',
+        format: 'image/png',
+        transparent: true,
+        tileSize: 1024,
+        pane: 'pane2015'
+    });
+
+    // 5. Dodanie panelu z checkboxami (Layer Control)
+    var baseMaps = {
+        "OpenStreetMap": osm
+    };
+
+    var overlayMaps = {
+        "Budynki 2025": budynki,
+        "Budynki 2015": budynki2015,
+        "Lasy 2025": lasy,
+        "Lasy 2015": lasy2015,
+        "analiza_zageszczenia": analiza_zageszczenia,
+        "nowe_budynki": nowe_budynki
+    };
+
+    //6. Atrybuty z WMS
+
+    var wmsLayers = {
+    "lublin:budynki_2025": budynki,
+    "lublin:budynki_2015": budynki2015,
+    "lublin:lasy_2025": lasy,
+    "lublin:lasy_2015": lasy2015
+    };
+
+map.on('click', function (e) {
+    var latlng = e.latlng;
+    var point = map.latLngToContainerPoint(latlng, map.getZoom());
+    var size = map.getSize();
+    
+    // Filtrujemy tylko te warstwy, które są aktualnie widoczne na mapie
+    var activeLayers = [];
+    for (var name in wmsLayers) {
+        if (map.hasLayer(wmsLayers[name])) {
+            activeLayers.push(name);
+        }
+    }
+
+    if (activeLayers.length === 0) return;
+
+    // Przygotowanie parametrów - łączymy aktywne warstwy przecinkiem
+    var params = {
+        request: 'GetFeatureInfo',
+        service: 'WMS',
+        srs: 'EPSG:4326',
+        version: '1.1.1',
+        bbox: map.getBounds().toBBoxString(),
+        height: size.y,
+        width: size.x,
+        layers: activeLayers.join(','),       // Wszystkie aktywne warstwy
+        query_layers: activeLayers.join(','), // Te same warstwy do odpytania
+        info_format: 'application/json',
+        x: Math.round(point.x),
+        y: Math.round(point.y),
+        feature_count: 5 // Ile maksymalnie obiektów zwrócić
+    };
+
+    var url = geoServerUrl + L.Util.getParamString(params, geoServerUrl);
+
+    fetch(url)
+        .then(response => response.json())
+        .then(data => {
+            if (data.features && data.features.length > 0) {
+                var content = "<div style='max-height:200px; overflow-y:auto;'>";
+                
+                data.features.forEach(function (feature) {
+                    var layerName = feature.id.split('.')[0]; // Pobiera nazwę tabeli
+                    content += `<b style='color: #2c3e50;'>Warstwa: ${layerName}</b><br>`;
+                    
+                    for (var key in feature.properties) {
+                        // Pomijamy puste pola i techniczne id geometrii
+                        if (feature.properties[key] && key !== 'bbox') {
+                            content += `<small><b>${key}:</b> ${feature.properties[key]}</small><br>`;
+                        }
+                    }
+                    content += "<hr>";
+                });
+                
+                content += "</div>";
+
+                L.popup()
+                    .setLatLng(latlng)
+                    .setContent(content)
+                    .openOn(map);
+            }
+        })
+        .catch(err => console.error("Błąd GetFeatureInfo:", err));
+    });
+    
+    document.getElementById('range-slider').addEventListener('input', function(e) {
+    var opacity = e.target.value;
+    budynki.setOpacity(opacity);
+    lasy.setOpacity(opacity);
+    });
+    
+    L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
+    
+    
+
+</script>
+</body>
+</html>

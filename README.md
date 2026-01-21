@@ -5,6 +5,8 @@ Projekt to interaktywna mapa porównawcza dla Lublina, która pokazuje jak zmien
 Jak to działa?
 Dane siedzą w bazie PostgreSQL z rozszerzeniem PostGIS. GeoServer pobiera je stamtąd i serwuje jako warstwy WMS na frontend zbudowany w Leaflet.js. Wszystko jest skonteneryzowane (Docker) i wystawione na świat przez Traefika z certyfikatami SSL.
 
+Frontend opublikowany na: map.rabciak.site
+
 Co można zobaczyć na mapie?
 - Budynki z 2025 i 2015 roku: Porównanie starej i nowej zabudowy.
 - Lasy: Porównanie zmian w danych z 2015 oraz 2025.

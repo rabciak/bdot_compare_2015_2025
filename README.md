@@ -40,12 +40,12 @@ HAVING count(b.id) > 0
 
 2. Wykrywanie nowych budynków (2025 vs 2015):
 Zapytanie filtruje budynki z najnowszej bazy, które nie mają części wspólnej z obrysami z roku 2015.
-
+~~~~sql
 SELECT b25.id, b25.geom
 FROM budynki_2025 b25
 LEFT JOIN budynki_2015 b15 
   ON ST_Intersects(b25.geom, b15.geom)
 WHERE b15.id IS NULL
-
+~~~~
 Najważniejsze funkcje frontendu:
 Dodałem suwak przezroczystości, który działa jak kurtyna – przesuwasz go i widzisz jak miasto "puchnie" od nowych budynków. Warstwy są ułożone w panele (Leaflet Panes), żeby lasy nigdy nie przykrywały budynków, a hexagony były czytelne jako tło analityczne.

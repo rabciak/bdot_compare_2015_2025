@@ -17,7 +17,7 @@ Poniżej znajdują się kluczowe zapytania SQL, które wykorzystałem w SQL View
 
 1. Generowanie siatki hexagonów z zagęszczeniem budynków:
 To zapytanie tworzy geometryczną siatkę i zlicza budynki w każdym oczku, co pozwala stworzyć heatmapę bez statycznych plików.
-
+~~~~sql
 WITH bounds AS (
     -- Tutaj definiujemy zasięg danych
     SELECT ST_SetSRID(ST_MakeEnvelope(22.4, 51.1, 22.7, 51.3), 4326) as envelope
@@ -36,7 +36,7 @@ LEFT JOIN budynki_2025 b
     ON ST_Intersects(grid.geom, b.geom)
 GROUP BY grid.geom
 HAVING count(b.id) > 0
-
+~~~~
 
 2. Wykrywanie nowych budynków (2025 vs 2015):
 Zapytanie filtruje budynki z najnowszej bazy, które nie mają części wspólnej z obrysami z roku 2015.
